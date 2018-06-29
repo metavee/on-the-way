@@ -1,25 +1,55 @@
+"""
+Sort a CSV of addresses by the amount of detour they would add to an existing route.
+"""
+
+
+import argparse
 import os
-import numpy as np
-import pandas as pd
 import sys
 import warnings
 import traceback
 
 import googlemaps
+import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
 
-# some hardcoded stuff
-filename = 'doctors.csv'
-home_addr = 'Conestoga Mall, Waterloo, ON'
-work_addr = 'Davis Centre, University of Waterloo, Waterloo, ON'
-
 secret_api_key = os.environ.get('GMAPS_API_KEY', '')
+if not secret_api_key:
+    print('Please set an API key for the Google Maps Distance Matrix APi in the environment variable `GMAPS_API_KEY`.')
+
+
 gmaps = googlemaps.Client(key=secret_api_key)
 
-spreadsheet = pd.read_csv(filename)
 
-endpoint_addrs = [home_addr, work_addr]
+def main(start_addr, end_addr, filename):
+
+    spreadsheet = pd.read_csv(filename)
+    if 'address' not in spreadsheet.columns:
+        raise ValueError('CSV file must have an `address` column.')
+
+    endpoint_addrs = [start_addr, end_addr]
+
+    # build a list of distance from start/end to each place
+    distances = distance_between(spreadsheet.address.values, endpoint_addrs)
+
+    # copy the lists into table
+    spreadsheet['distance from start'] = distances[:, 0]
+    spreadsheet['distance from end'] = distances[:, 1]
+
+    # add a column for the combined distance
+    spreadsheet['combined distance'] = spreadsheet['distance from start'] + spreadsheet['distance from end']
+
+    # sort by lowest combined distance
+    spreadsheet = spreadsheet.sort_values('combined distance')
+
+    # save the result
+    out_filename = os.path.splitext(filename)[0] + '_sorted.csv'
+    spreadsheet.to_csv(out_filename, index=False)
+
+    print('Done! Please see', out_filename, 'for the results.')
+
 
 def batch(size):
     """
@@ -29,11 +59,11 @@ def batch(size):
     """
 
     def decorator(fxn):
-        def decorated(arg):
+        def decorated(arg, *args, **kwargs):
             start_indices = list(range(0, len(arg), size))
             results = []
             for i in tqdm(start_indices):
-                results.append(fxn(arg[i:i+size]))
+                results.append(fxn(arg[i:i+size], *args, **kwargs))
 
             if type(results[0]) == list:
                 return sum(results, [])
@@ -49,8 +79,9 @@ def batch(size):
     
     return decorator
 
+
 @batch(20)
-def distance_between(midpoint_addrs):
+def distance_between(midpoint_addrs, endpoint_addrs):
     """
     Measure the distance between the fixed `endpoint_addrs` and specified `midpoint_addrs`.
 
@@ -76,21 +107,12 @@ def distance_between(midpoint_addrs):
 
     return results.transpose()
 
-# build a list of distance from home/work to each place
-distances = distance_between(spreadsheet.address.values)
 
-# copy the lists into table
-spreadsheet['distance from home'] = distances[:, 0]
-spreadsheet['distance from work'] = distances[:, 1]
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('START_ADDRESS', type=str, help='Start address on the fixed route.')
+    parser.add_argument('END_ADDRESS', type=str, help='End address on the fixed route.')
+    parser.add_argument('CSV_FILE', type=str, help='Path to CSV file with address column.')
 
-# add a column for the combined distance
-spreadsheet['combined distance'] = spreadsheet['distance from home'] + spreadsheet['distance from work']
-
-# sort by lowest combined distance
-spreadsheet = spreadsheet.sort_values('combined distance')
-
-# save the result
-out_filename = os.path.splitext(filename)[0] + '_sorted.csv'
-spreadsheet.to_csv(out_filename, index=False)
-
-print('Done! Please see', out_filename, 'for the results.')
+    args = parser.parse_args()
+    main(args.START_ADDRESS, args.END_ADDRESS, args.CSV_FILE)
