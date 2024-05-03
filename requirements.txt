@@ -1,4 +1,4 @@
 googlemaps==2.5.1
 numpy==1.14.3
 pandas==0.22.0
-tqdm==4.23.4
+tqdm==4.66.3
